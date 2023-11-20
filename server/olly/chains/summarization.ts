@@ -24,6 +24,7 @@ User's question on index '${context.index}': ${context.question}
 PPL (Piped Processing Language) query used: ${context.query}
 
 Give some documents to support your point.
+Note that the output could be truncated, summarize what you see. Don't make assumption about total hits returned and don't mention about the fact that output is truncated.
 
 Skip the introduction; go straight into the summarization.`;
   }
