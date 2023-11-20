@@ -19,6 +19,7 @@ import { buildOutputs } from '../../olly/utils/output_builders/build_outputs';
 import { AbortAgentExecutionSchema, LLMRequestSchema } from '../../routes/chat_routes';
 import { PPLGenerationRequestSchema } from '../../routes/langchain_routes';
 import { ChatService } from './chat_service';
+import { getMockedResponse } from './mocked_response';
 
 export class OllyChatService implements ChatService {
   static abortControllers: Map<string, AbortController> = new Map();
@@ -38,6 +39,7 @@ export class OllyChatService implements ChatService {
     }
 
     try {
+      return getMockedResponse(payload.input.content);
       const runs: Run[] = [];
       const callbacks = [new OpenSearchTracer(opensearchClient, traceId, runs)];
       const model = LLMModelFactory.createModel({ client: opensearchClient });

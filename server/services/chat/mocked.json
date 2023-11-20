@@ -1,0 +1,39 @@
+[
+  {
+    "question": "1",
+    "output": [
+      {
+        "content": "response1",
+        "contentType": "markdown",
+        "suggestions": ["suggestion1", "suggestion2"],
+        "toolsUsed": ["tools"]
+      }
+    ]
+  },
+  {
+    "question": "2",
+    "output": [
+      {
+        "content": "here is sample flights data",
+        "contentType": "markdown"
+      },
+      {
+        "content": "source=opensearch_dashboards_sample_data_flights | stats COUNT() AS count by span(timestamp, 1d) AS span",
+        "contentType": "ppl_visualization",
+        "suggestions": ["suggestion1", "suggestion2"],
+        "toolsUsed": ["tools"]
+      }
+    ]
+  },
+  {
+    "question": "3",
+    "output": [
+      {
+        "content": "response3",
+        "contentType": "markdown",
+        "suggestions": ["suggestion1", "suggestion2"],
+        "toolsUsed": ["tools"]
+      }
+    ]
+  }
+]
