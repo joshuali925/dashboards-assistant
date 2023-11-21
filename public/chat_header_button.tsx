@@ -38,6 +38,7 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
   const [traceId, setTraceId] = useState<string | undefined>(undefined);
   const [chatSize, setChatSize] = useState<number | 'fullscreen' | 'dock-right'>('dock-right');
   const [query, setQuery] = useState('');
+  const [inputFocus, setInputFocus] = useState(false);
   const flyoutFullScreen = chatSize === 'fullscreen';
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -95,7 +96,7 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
   );
 
   const onKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && query.trim().length > 0) {
       // open chat window
       setFlyoutVisible(true);
       // start a new chat
@@ -141,6 +142,8 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
           inputRef={inputRef}
           compressed
           value={query}
+          onFocus={() => setInputFocus(true)}
+          onBlur={() => setInputFocus(false)}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask question"
           onKeyPress={onKeyPress}
@@ -150,7 +153,15 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
           }
           append={
             <span className="llm-chat-header-shortcut">
-              <EuiBadge color="hollow">⌘ + /</EuiBadge>
+              {inputFocus ? (
+                <EuiBadge className="llm-chat-header-shortcut-enter" color="hollow">
+                  ⏎
+                </EuiBadge>
+              ) : (
+                <EuiBadge className="llm-chat-header-shortcut-cmd" color="hollow">
+                  ⌘ + /
+                </EuiBadge>
+              )}
             </span>
           }
         />
