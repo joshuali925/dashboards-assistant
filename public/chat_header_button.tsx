@@ -37,7 +37,6 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
   const [preSelectedTabId, setPreSelectedTabId] = useState<TabId | undefined>(undefined);
   const [traceId, setTraceId] = useState<string | undefined>(undefined);
   const [chatSize, setChatSize] = useState<number | 'fullscreen' | 'dock-right'>('dock-right');
-  const [query, setQuery] = useState('');
   const [inputFocus, setInputFocus] = useState(false);
   const flyoutFullScreen = chatSize === 'fullscreen';
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,7 +95,7 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
   );
 
   const onKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && query.trim().length > 0) {
+    if (e.key === 'Enter' && inputRef.current && inputRef.current.value.trim().length !== 0) {
       // open chat window
       setFlyoutVisible(true);
       // start a new chat
@@ -105,14 +104,11 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
       props.assistantActions.send({
         type: 'input',
         contentType: 'text',
-        content: query,
+        content: inputRef.current.value,
         context: { appId },
       });
-      // reset query to empty
-      setQuery('');
-      if (inputRef.current) {
-        inputRef.current.blur();
-      }
+      inputRef.current.value = '';
+      inputRef.current.blur();
     }
   };
 
@@ -123,15 +119,15 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
   };
 
   useEffect(() => {
-    const onGlobalMouseUp = (e: KeyboardEvent) => {
+    const onGlobalKeyUp = (e: KeyboardEvent) => {
       if (e.metaKey && e.key === '/') {
         inputRef.current?.focus();
       }
     };
-    document.addEventListener('keydown', onGlobalMouseUp);
+    document.addEventListener('keydown', onGlobalKeyUp);
 
     return () => {
-      document.removeEventListener('keydown', onGlobalMouseUp);
+      document.removeEventListener('keydown', onGlobalKeyUp);
     };
   }, []);
 
@@ -141,10 +137,8 @@ export const HeaderChatButton: React.FC<HeaderChatButtonProps> = (props) => {
         <EuiFieldText
           inputRef={inputRef}
           compressed
-          value={query}
           onFocus={() => setInputFocus(true)}
           onBlur={() => setInputFocus(false)}
-          onChange={(e) => setQuery(e.target.value)}
           placeholder="Ask question"
           onKeyPress={onKeyPress}
           onKeyUp={onKeyUp}
