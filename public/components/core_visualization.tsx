@@ -36,7 +36,7 @@ export const CoreVisualization: React.FC<CoreVisualizationProps> = (props) => {
 
 const createDashboardVizObject = (
   objectId: string,
-  from: ShortDate = 'now-15m',
+  from: ShortDate = 'now-24h',
   to: ShortDate = 'now'
 ): DashboardContainerInput => {
   const vizUniqueId = htmlIdGenerator()();
