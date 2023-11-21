@@ -39,7 +39,8 @@ export class OllyChatService implements ChatService {
     }
 
     try {
-      return getMockedResponse(payload.input.content);
+      const mocked = await getMockedResponse(payload.input.content);
+      if (mocked !== undefined) return mocked;
       const runs: Run[] = [];
       const callbacks = [new OpenSearchTracer(opensearchClient, traceId, runs)];
       const model = LLMModelFactory.createModel({ client: opensearchClient });

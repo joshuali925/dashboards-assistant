@@ -18,13 +18,13 @@ interface MockResponse {
 
 const mockResponses = MOCKED_RESPONSES as MockResponse[];
 
-let lastIndex = 0;
 const rand = (min: number, max: number) => Math.random() * (max - min + 1) + min;
 
-export const getMockedResponse = async (question: string): Promise<IMessage[]> => {
+export const getMockedResponse = async (question: string): Promise<IMessage[] | undefined> => {
   const index = mockResponses.findIndex((resp) => resp.question.trim() === question.trim());
-  if (index !== -1) lastIndex = index;
-  const outputs = mockResponses[lastIndex++ % mockResponses.length].output;
+  if (index === -1) return undefined;
+
+  const outputs = mockResponses[index].output;
   await new Promise((resolve) => setTimeout(resolve, rand(10, 20) * 1000));
 
   return outputs.map((output) => ({
