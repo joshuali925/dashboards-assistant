@@ -7,6 +7,7 @@ import { BaseLanguageModel } from 'langchain/base_language';
 import { Callbacks } from 'langchain/callbacks';
 import { LLMChain } from 'langchain/chains';
 import { PromptTemplate } from 'langchain/prompts';
+import { ErrorWithStatus } from '../../errors/error_with_status';
 
 const template = `
 You will be given a question about some metrics from a user.
@@ -252,5 +253,6 @@ export const requestPPLGeneratorChain = async (
         .replace(/ISNOTNULL/g, 'isnotnull') // TODO remove after https://github.com/opensearch-project/sql/issues/2431
         .trim(),
     };
-  throw new Error(output.text);
+  // if the response does not have <ppl>, then the request cannot be converted to a valid PPL query
+  throw new ErrorWithStatus(output.text, 400);
 };
