@@ -56,6 +56,7 @@ export class MLCommonsChatModel extends BaseChatModel {
   }
 
   async model_predict(prompt: string) {
+    console.log('❗prompt:', prompt);
     const getResponse = await this.opensearchClient.get<AssistantConfigDoc>({
       id: ASSISTANT_CONFIG_DOCUMENT,
       index: ASSISTANT_CONFIG_INDEX,
@@ -74,6 +75,7 @@ export class MLCommonsChatModel extends BaseChatModel {
       },
     });
     const respData = mlCommonsResponse.body.inference_results[0].output[0].dataAsMap;
+    console.log('❗respData:', respData);
     return respData.completion || respData.message || 'Failed to request model';
   }
 

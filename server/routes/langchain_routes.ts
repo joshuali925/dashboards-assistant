@@ -47,6 +47,8 @@ const summarizationRoute = {
 };
 export type SummarizationRequestSchema = TypeOf<typeof summarizationRoute.validate.body>;
 
+let pending = 0;
+
 export function registerLangchainRoutes(router: IRouter) {
   router.post(
     pplGenerationRoute,
@@ -57,11 +59,15 @@ export function registerLangchainRoutes(router: IRouter) {
     ): Promise<IOpenSearchDashboardsResponse<HttpResponsePayload | ResponseError>> => {
       const chatService = new OllyChatService();
       try {
+        pending++;
+        context.assistant_plugin.logger.info(`[${pending} pending] Generating PPL`);
         const ppl = await chatService.generatePPL(context, request);
         return response.ok({ body: ppl });
       } catch (error) {
         context.assistant_plugin.logger.warn(error);
         return response.custom({ statusCode: error.statusCode || 500, body: error.message });
+      } finally {
+        pending--;
       }
     }
   );
@@ -79,6 +85,8 @@ export function registerLangchainRoutes(router: IRouter) {
         const opensearchClient = context.core.opensearch.client.asCurrentUser;
         const callbacks = [new OpenSearchTracer(opensearchClient, traceId, runs)];
         const model = LLMModelFactory.createModel({ client: opensearchClient });
+        pending++;
+        context.assistant_plugin.logger.info(`[${pending} pending] Generating summary`);
         const chainResponse = await requestSummarizationChain(
           { client: opensearchClient, model, ...request.body },
           callbacks
@@ -87,6 +95,8 @@ export function registerLangchainRoutes(router: IRouter) {
       } catch (error) {
         context.assistant_plugin.logger.warn(error);
         return response.custom({ statusCode: error.statusCode || 500, body: error.message });
+      } finally {
+        pending--;
       }
     }
   );
