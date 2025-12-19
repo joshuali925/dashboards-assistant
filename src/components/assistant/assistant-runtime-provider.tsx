@@ -10,8 +10,24 @@ interface AssistantRuntimeProviderProps {
   children: ReactNode
 }
 
+const generateId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`
+
 const convertMessage = (message: ThreadMessageLike): ThreadMessageLike => {
-  return message
+  // Ensure message has all required fields with proper types
+  return {
+    id: message.id ?? generateId(),
+    role: message.role,
+    content: message.content.map((part) => {
+      if (typeof part === "string") {
+        return { type: "text" as const, text: part }
+      }
+      if (part.type === "text") {
+        return { type: "text" as const, text: part.text ?? "" }
+      }
+      return part
+    }),
+    createdAt: message.createdAt ?? new Date(),
+  }
 }
 
 // Helper to extract text from message content
@@ -35,8 +51,10 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
       }
 
       const userMessage: ThreadMessageLike = {
+        id: generateId(),
         role: "user",
-        content: [{ type: "text", text: message.content[0].text }],
+        content: [{ type: "text", text: message.content[0].text ?? "" }],
+        createdAt: new Date(),
       }
 
       setMessages((currentMessages) => [...currentMessages, userMessage])
@@ -64,18 +82,21 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
         const data = await response.json()
 
         const assistantMessage: ThreadMessageLike = {
+          id: generateId(),
           role: "assistant",
           content: [
             {
               type: "text",
-              text: data.message.content,
+              text: data.message?.content ?? "No response received",
             },
           ],
+          createdAt: new Date(),
         }
 
         setMessages((currentMessages) => [...currentMessages, assistantMessage])
       } catch {
         const errorMessage: ThreadMessageLike = {
+          id: generateId(),
           role: "assistant",
           content: [
             {
@@ -83,6 +104,7 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
               text: "Sorry, an error occurred while processing your request.",
             },
           ],
+          createdAt: new Date(),
         }
         setMessages((currentMessages) => [...currentMessages, errorMessage])
       } finally {
@@ -141,17 +163,20 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
       const data = await response.json()
 
       const assistantMessage: ThreadMessageLike = {
+        id: generateId(),
         role: "assistant",
         content: [
           {
             type: "text",
-            text: data.message.content,
+            text: data.message?.content ?? "No response received",
           },
         ],
+        createdAt: new Date(),
       }
       setMessages((currentMessages) => [...currentMessages, assistantMessage])
     } catch {
       const errorMessage: ThreadMessageLike = {
+        id: generateId(),
         role: "assistant",
         content: [
           {
@@ -159,6 +184,7 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
             text: "Sorry, an error occurred while regenerating the response.",
           },
         ],
+        createdAt: new Date(),
       }
       setMessages((currentMessages) => [...currentMessages, errorMessage])
     } finally {

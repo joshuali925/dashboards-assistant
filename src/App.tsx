@@ -1,4 +1,3 @@
-import "@assistant-ui/styles/index.css"
 import { AssistantApp } from "@/components/assistant"
 
 function App() {
