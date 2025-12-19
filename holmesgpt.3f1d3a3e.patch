@@ -1,0 +1,322 @@
+diff --git c/experimental/ag-ui/server-agui.py i/experimental/ag-ui/server-agui.py
+index f5bcb938..de0ee0cc 100644
+--- c/experimental/ag-ui/server-agui.py
++++ i/experimental/ag-ui/server-agui.py
+@@ -48,6 +48,7 @@ from ag_ui.core import (
+     ToolCallStartEvent,
+     ToolCallArgsEvent,
+     ToolCallEndEvent,
++    ToolCallResultEvent,
+     RunErrorEvent,
+ )
+ from ag_ui.encoder import EventEncoder
+@@ -160,10 +161,31 @@ def agui_chat(input_data: RunAgentInput, request: Request):
+                         ):
+                             yield encoder.encode(event)
+                     elif event_type == StreamEvents.START_TOOL:
+-                        async for event in _stream_agui_text_message_event(
+-                            message=f"🔧 Using Agent tool: `{tool_name}`..."
+-                        ):
+-                            yield encoder.encode(event)
++                        # Emit proper AG-UI tool call events instead of text messages
++                        tool_call_id = chunk.data.get(
++                            "tool_call_id", chunk.data.get("id", str(uuid.uuid4()))
++                        )
++                        tool_args = chunk.data.get("args", chunk.data.get("params", {}))
++                        yield encoder.encode(
++                            ToolCallStartEvent(
++                                type=EventType.TOOL_CALL_START,
++                                tool_call_id=tool_call_id,
++                                tool_call_name=tool_name,
++                            )
++                        )
++                        yield encoder.encode(
++                            ToolCallArgsEvent(
++                                type=EventType.TOOL_CALL_ARGS,
++                                tool_call_id=tool_call_id,
++                                delta=json.dumps(tool_args) if tool_args else "{}",
++                            )
++                        )
++                        yield encoder.encode(
++                            ToolCallEndEvent(
++                                type=EventType.TOOL_CALL_END,
++                                tool_call_id=tool_call_id,
++                            )
++                        )
+                     elif event_type == StreamEvents.TOOL_RESULT:
+                         logging.debug(
+                             f"🔧 TOOL_RESULT received - tool_name: {tool_name}"
+@@ -207,18 +229,55 @@ def agui_chat(input_data: RunAgentInput, request: Request):
+                                 tool_call_args={"query": _parse_query(chunk.data)},
+                             ):
+                                 yield encoder.encode(tool_event)
+-                        if not front_end_tool_invoked:
+-                            # TODO [FUTURE]: Render "TodoWrite" tool_name results prettier. Use code block for now.
+-                            #                 Ideally using TOOL_STEP events.
+-                            if tool_name == "TodoWrite":
+-                                tool_message = _format_todo_write(data=chunk.data)
+-                            else:
+-                                tool_message = f"🔧 {tool_name} result:\n{chunk.data.get('result', {}).get('data', '')[0:200]}..."
++                        # Handle showCodeBlock as a frontend tool
++                        if tool_name == "showCodeBlock" and _is_frontend_tool(
++                            tool_name, input_data.tools
++                        ):
++                            front_end_tool_invoked = True
++                            tool_call_id = chunk.data.get(
++                                "tool_call_id", chunk.data.get("id", str(uuid.uuid4()))
++                            )
++                            result_data = chunk.data.get("result", {})
++                            # Extract the code block data from the result
++                            code_block_args = {}
++                            if isinstance(result_data, dict):
++                                data = result_data.get("data", result_data)
++                                if isinstance(data, dict):
++                                    code_block_args = data
++                                else:
++                                    code_block_args = result_data
++                            # Also check params for the original arguments
++                            params = result_data.get("params", {}) if isinstance(result_data, dict) else {}
++                            if params:
++                                code_block_args = {**code_block_args, **params}
+ 
+-                            async for event in _stream_agui_text_message_event(
+-                                message=tool_message
++                            async for tool_event in _invoke_front_end_tool(
++                                tool_call_id=tool_call_id,
++                                tool_call_name="showCodeBlock",
++                                tool_call_args=code_block_args,
+                             ):
+-                                yield encoder.encode(event)
++                                yield encoder.encode(tool_event)
++
++                        if not front_end_tool_invoked:
++                            # Emit proper AG-UI TOOL_CALL_RESULT event instead of text messages
++                            tool_call_id = chunk.data.get(
++                                "tool_call_id", chunk.data.get("id", str(uuid.uuid4()))
++                            )
++                            result_data = chunk.data.get("result", {})
++                            # Format result as JSON string for the event
++                            if isinstance(result_data, dict):
++                                result_content = json.dumps(result_data)
++                            else:
++                                result_content = str(result_data)
++                            yield encoder.encode(
++                                ToolCallResultEvent(
++                                    type=EventType.TOOL_CALL_RESULT,
++                                    message_id=str(uuid.uuid4()),
++                                    tool_call_id=tool_call_id,
++                                    content=result_content,
++                                    role="tool",
++                                )
++                            )
+             yield encoder.encode(
+                 RunFinishedEvent(
+                     type=EventType.RUN_FINISHED,
+@@ -273,6 +332,33 @@ def _should_execute_suggested_query(
+     return False
+ 
+ 
++def _get_frontend_tools_prompt(frontend_tools: list) -> str:
++    """Generate system prompt additions for frontend UI tools like showCodeBlock."""
++    tool_prompts = []
++    for tool in frontend_tools:
++        if tool.name == "showCodeBlock":
++            tool_prompts.append(
++                """You have access to a 'showCodeBlock' tool for displaying code with syntax highlighting.
++When you want to show code to the user, you MUST use this tool instead of markdown code blocks.
++
++To use it, call the showCodeBlock tool with:
++- code: The code to display (required)
++- language: The programming language for syntax highlighting, e.g., 'python', 'javascript', 'typescript', 'bash' (required)
++- filename: Optional filename to display in the header
++- showLineNumbers: Whether to show line numbers (optional, default false)
++- highlightLines: Array of line numbers to highlight (optional)
++
++Example: To show a Python function, call showCodeBlock with code="def hello():\\n    print('Hello')" and language="python"."""
++            )
++    return "\n\n".join(tool_prompts)
++
++
++def _is_frontend_tool(tool_name: str, frontend_tools: list) -> bool:
++    """Check if a tool is a frontend-only tool that should be rendered in the UI."""
++    frontend_tool_names = {tool.name for tool in frontend_tools}
++    return tool_name in frontend_tool_names
++
++
+ def _parse_query(data) -> str:
+     result_data = data.get("result", {})
+     params = result_data.get("params", {})
+@@ -396,10 +482,18 @@ def _agui_input_to_holmes_chat_request(input_data: RunAgentInput) -> ChatRequest
+             non_system_messages.append(msg)
+         elif msg.role == "tool":
+             non_system_messages.append(AssistantMessage(content=msg.content, id=msg.id))
++
++    # Build system prompt with frontend tools if available
++    base_system_prompt = "You are Holmes, an AI assistant for observability. You use Prometheus metrics, alerts and OpenSearch logs to quickly perform root cause analysis."
++    frontend_tools_prompt = _get_frontend_tools_prompt(input_data.tools) if input_data.tools else ""
++    system_content = base_system_prompt
++    if frontend_tools_prompt:
++        system_content = f"{base_system_prompt}\n\n{frontend_tools_prompt}"
++
+     conversation_history = [
+         {
+             "role": "system",
+-            "content": "You are Holmes, an AI assistant for observability. You use Prometheus metrics, alerts and OpenSearch logs to quickly perform root cause analysis.",
++            "content": system_content,
+         }
+     ]
+     if len(non_system_messages) > 1:
+diff --git c/holmes/plugins/toolsets/__init__.py i/holmes/plugins/toolsets/__init__.py
+index 2368859c..485009df 100644
+--- c/holmes/plugins/toolsets/__init__.py
++++ i/holmes/plugins/toolsets/__init__.py
+@@ -52,6 +52,7 @@ from holmes.plugins.toolsets.servicenow_tables.servicenow_tables import (
+ from holmes.plugins.toolsets.investigator.core_investigation import (
+     CoreInvestigationToolset,
+ )
++from holmes.plugins.toolsets.frontend.frontend_toolset import FrontendToolset
+ 
+ THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+ 
+@@ -80,6 +81,7 @@ def load_python_toolsets(
+     logging.debug("loading python toolsets")
+     toolsets: list[Toolset] = [
+         CoreInvestigationToolset(),  # Load first for higher priority
++        FrontendToolset(),  # Frontend UI tools (showCodeBlock, etc.)
+         InternetToolset(),
+         RobustaToolset(dal),
+         OpenSearchToolset(),
+diff --git c/holmes/plugins/toolsets/frontend/__init__.py i/holmes/plugins/toolsets/frontend/__init__.py
+new file mode 100644
+index 00000000..8a60c054
+--- /dev/null
++++ i/holmes/plugins/toolsets/frontend/__init__.py
+@@ -0,0 +1 @@
++# Frontend toolset - tools that render UI in the frontend
+diff --git c/holmes/plugins/toolsets/frontend/frontend_toolset.py i/holmes/plugins/toolsets/frontend/frontend_toolset.py
+new file mode 100644
+index 00000000..5cf47a8c
+--- /dev/null
++++ i/holmes/plugins/toolsets/frontend/frontend_toolset.py
+@@ -0,0 +1,121 @@
++"""
++Frontend Toolset - Tools that render UI components in the frontend.
++
++These tools don't execute backend logic - they simply return their arguments
++so the frontend can render appropriate UI components.
++"""
++
++from typing import Any, Dict, List, Optional, Tuple
++
++from holmes.core.tools import (
++    Tool,
++    ToolInvokeContext,
++    ToolParameter,
++    Toolset,
++    ToolsetTag,
++    StructuredToolResult,
++    StructuredToolResultStatus,
++)
++
++
++class ShowCodeBlockTool(Tool):
++    """
++    A tool that displays code with syntax highlighting in the frontend.
++
++    This is a frontend-only tool - it returns the code and metadata
++    so the frontend can render it with proper syntax highlighting.
++    """
++
++    def __init__(self, toolset: "FrontendToolset"):
++        super().__init__(
++            name="showCodeBlock",
++            description=(
++                "Display code with syntax highlighting to the user. "
++                "Use this tool whenever you want to show code snippets, scripts, "
++                "configuration files, or any programming code. The code will be "
++                "rendered with proper syntax highlighting in the user interface."
++            ),
++            parameters={
++                "code": ToolParameter(
++                    description="The code to display",
++                    type="string",
++                    required=True,
++                ),
++                "language": ToolParameter(
++                    description=(
++                        "The programming language for syntax highlighting. "
++                        "Examples: python, javascript, typescript, bash, yaml, json, go, rust, java, sql"
++                    ),
++                    type="string",
++                    required=True,
++                ),
++                "filename": ToolParameter(
++                    description="Optional filename to display in the header (e.g., 'example.py')",
++                    type="string",
++                    required=False,
++                ),
++                "showLineNumbers": ToolParameter(
++                    description="Whether to show line numbers (default: false)",
++                    type="boolean",
++                    required=False,
++                ),
++            },
++            toolset=toolset,  # type: ignore
++        )
++
++    def _invoke(self, params: dict, context: ToolInvokeContext) -> StructuredToolResult:
++        """
++        Return the code block parameters for frontend rendering.
++
++        This tool doesn't execute any backend logic - it just passes the
++        parameters through so the frontend can render the code block.
++        """
++        return StructuredToolResult(
++            status=StructuredToolResultStatus.SUCCESS,
++            data={
++                "code": params.get("code", ""),
++                "language": params.get("language", "text"),
++                "filename": params.get("filename"),
++                "showLineNumbers": params.get("showLineNumbers", False),
++            },
++            params=params,
++        )
++
++    def get_parameterized_one_liner(self, params: Dict) -> str:
++        language = params.get("language", "code")
++        filename = params.get("filename")
++        if filename:
++            return f"Show code block: {filename} ({language})"
++        return f"Show {language} code block"
++
++
++class FrontendToolset(Toolset):
++    """
++    Toolset for frontend UI rendering tools.
++
++    These tools enable the LLM to trigger rich UI components in the frontend,
++    such as syntax-highlighted code blocks, charts, and other visualizations.
++    """
++
++    def __init__(self):
++        tools: List[Tool] = []
++        super().__init__(
++            name="frontend",
++            description="Tools for rendering rich UI components like code blocks with syntax highlighting",
++            icon_url="https://platform.robusta.dev/demos/code.svg",
++            prerequisites=[],  # No prerequisites - always available
++            tools=tools,
++            tags=[ToolsetTag.CORE],
++            is_default=True,  # Enable by default
++            docs_url=None,
++        )
++        # Initialize tools after Toolset is created
++        self.tools = [ShowCodeBlockTool(self)]
++
++    def prerequisites_callable(self, config: Dict[str, Any]) -> Tuple[bool, str]:
++        """Frontend tools have no prerequisites."""
++        return True, "Frontend tools are always available"
++
++    def get_example_config(self) -> Dict[str, Any]:
++        """Frontend tools require no configuration."""
++        return {}

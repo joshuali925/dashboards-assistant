@@ -148,6 +148,45 @@ async function* parseSSEStream(reader: ReadableStreamDefaultReader<Uint8Array>):
 // Use the proxied AG-UI endpoint via the Node.js server
 const DEFAULT_AGENT_URL = import.meta.env.VITE_AGUI_URL || "/api/agui/chat"
 
+// Tool definitions to send to HolmesGPT via ag-ui protocol
+const TOOLS = [
+  {
+    name: "showCodeBlock",
+    description: "Display a code snippet with syntax highlighting. Use this tool whenever you want to show code to the user. The code will be rendered with proper syntax highlighting, line numbers, and a copy button.",
+    parameters: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "The code to display"
+        },
+        language: {
+          type: "string",
+          description: "The programming language for syntax highlighting (e.g., 'python', 'javascript', 'typescript', 'bash', etc.)"
+        },
+        filename: {
+          type: "string",
+          description: "Optional filename to display in the header"
+        },
+        showLineNumbers: {
+          type: "boolean",
+          description: "Whether to show line numbers (default: false)"
+        },
+        highlightLines: {
+          type: "array",
+          items: { type: "number" },
+          description: "Array of line numbers to highlight"
+        },
+        maxCollapsedLines: {
+          type: "number",
+          description: "If set, collapse the code block after this many lines with an expand button"
+        }
+      },
+      required: ["code", "language"]
+    }
+  }
+]
+
 export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> = ({
   children,
   agentUrl = DEFAULT_AGENT_URL,
@@ -250,7 +289,7 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
             threadId: threadIdRef.current,
             runId: generateId(),
             messages: toAgUiMessages(updatedMessages),
-            tools: [],
+            tools: TOOLS,
             context: [],
             forwardedProps: {},
             state: {},

@@ -4,7 +4,7 @@ import { AssistantRuntimeProvider } from "./assistant-runtime-provider"
 import { Thread } from "@/components/assistant-ui/thread"
 
 // Tool UI components - mount these to register custom tool renderers
-import { GenericToolUI } from "@/components/tool-ui"
+import { GenericToolUI, ShowCodeBlockUI } from "@/components/tool-ui"
 
 export const AssistantApp: React.FC = () => {
   return (
@@ -12,6 +12,8 @@ export const AssistantApp: React.FC = () => {
       <TooltipProvider>
         <div className="h-full w-full">
           <AssistantRuntimeProvider>
+            {/* ShowCodeBlockUI renders code blocks from HolmesGPT */}
+            <ShowCodeBlockUI />
             {/* GenericToolUI renders for any tool call as a fallback */}
             <GenericToolUI />
 
