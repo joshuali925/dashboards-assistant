@@ -4,6 +4,7 @@ import {
   useExternalStoreRuntime,
   type ThreadMessageLike,
   type AppendMessage,
+  type AddToolResultOptions,
 } from "@assistant-ui/react"
 
 // Text content part shape
@@ -12,11 +13,35 @@ interface TextContentPart {
   text: string
 }
 
+// Tool call content part shape (matches assistant-ui's expected format)
+interface ToolCallContentPart {
+  type: "tool-call"
+  toolCallId: string
+  toolName: string
+  args: Record<string, JSONValue>
+  argsText: string
+  result?: JSONValue
+}
+
+// JSON value type for proper typing
+type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue }
+
+// Content part union type
+type ContentPart = TextContentPart | ToolCallContentPart
+
 // AG-UI message format
 interface AgUiMessage {
   id: string
   role: "user" | "assistant"
   content: string
+}
+
+// Track in-progress tool calls during streaming
+interface ToolCallState {
+  toolCallId: string
+  toolName: string
+  argsBuffer: string
+  parentMessageId?: string
 }
 
 // AG-UI SSE event types
@@ -25,6 +50,13 @@ interface AgUiEvent {
   delta?: string
   message?: string
   messageId?: string
+  // Tool call specific fields
+  toolCallId?: string
+  toolCallName?: string
+  parentMessageId?: string
+  // Tool result specific fields
+  content?: string
+  role?: string
   [key: string]: unknown
 }
 
@@ -48,6 +80,17 @@ const convertMessage = (message: ThreadMessageLike): ThreadMessageLike => {
       }
       if (part.type === "text") {
         return { type: "text" as const, text: (part as TextContentPart).text ?? "" }
+      }
+      if (part.type === "tool-call") {
+        const toolPart = part as ToolCallContentPart
+        return {
+          type: "tool-call" as const,
+          toolCallId: toolPart.toolCallId,
+          toolName: toolPart.toolName,
+          args: toolPart.args,
+          argsText: toolPart.argsText,
+          result: toolPart.result,
+        }
       }
       return part
     }),
@@ -113,6 +156,8 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
   const [messages, setMessages] = useState<ThreadMessageLike[]>([])
   const threadIdRef = useRef<string>(generateId())
   const abortControllerRef = useRef<AbortController | null>(null)
+  // Track in-progress tool calls during streaming
+  const toolCallsRef = useRef<Map<string, ToolCallState>>(new Map())
 
   const onNew = useCallback(
     async (message: AppendMessage) => {
@@ -139,15 +184,59 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
 
       const assistantMessageId = generateId()
       let assistantText = ""
+      // Clear tool calls for new message
+      toolCallsRef.current.clear()
 
       // Create placeholder assistant message for streaming
       const placeholderMessage: ThreadMessageLike = {
         id: assistantMessageId,
         role: "assistant",
-        content: [{ type: "text", text: "" }],
+        content: [{ type: "text", text: "" }] as ContentPart[],
         createdAt: new Date(),
       }
       setMessages((prev) => [...prev, placeholderMessage])
+
+      // Helper to update the assistant message with current content
+      const updateAssistantMessage = (textContent: string, toolCalls: Map<string, ToolCallState>) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMessageId) return m
+
+            const parts: Array<TextContentPart | ToolCallContentPart> = []
+
+            // Add text part if there's any text
+            if (textContent) {
+              parts.push({ type: "text" as const, text: textContent })
+            }
+
+            // Add tool call parts
+            for (const [, tc] of toolCalls) {
+              let args: Record<string, JSONValue> = {}
+              try {
+                if (tc.argsBuffer) {
+                  args = JSON.parse(tc.argsBuffer) as Record<string, JSONValue>
+                }
+              } catch {
+                // Args may still be streaming, keep empty
+              }
+              parts.push({
+                type: "tool-call" as const,
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                args,
+                argsText: tc.argsBuffer,
+              })
+            }
+
+            // Ensure at least one empty text part if nothing else
+            if (parts.length === 0) {
+              parts.push({ type: "text" as const, text: "" })
+            }
+
+            return { ...m, content: parts }
+          })
+        )
+      }
 
       try {
         // Make AG-UI request with SSE streaming
@@ -184,16 +273,83 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
           switch (event.type) {
             case "TEXT_MESSAGE_CONTENT":
               assistantText += event.delta || ""
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: [{ type: "text" as const, text: assistantText }] }
-                    : m
-                )
-              )
+              updateAssistantMessage(assistantText, toolCallsRef.current)
               break
+
+            case "TOOL_CALL_START":
+              // Start tracking a new tool call
+              if (event.toolCallId && event.toolCallName) {
+                toolCallsRef.current.set(event.toolCallId, {
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolCallName,
+                  argsBuffer: "",
+                  parentMessageId: event.parentMessageId,
+                })
+                updateAssistantMessage(assistantText, toolCallsRef.current)
+              }
+              break
+
+            case "TOOL_CALL_ARGS":
+              // Append to the args buffer for the tool call
+              if (event.toolCallId && event.delta) {
+                const toolCall = toolCallsRef.current.get(event.toolCallId)
+                if (toolCall) {
+                  toolCall.argsBuffer += event.delta
+                  updateAssistantMessage(assistantText, toolCallsRef.current)
+                }
+              }
+              break
+
+            case "TOOL_CALL_END":
+              // Tool call arguments are complete, parse the final args
+              if (event.toolCallId) {
+                const toolCall = toolCallsRef.current.get(event.toolCallId)
+                if (toolCall) {
+                  updateAssistantMessage(assistantText, toolCallsRef.current)
+                }
+              }
+              break
+
+            case "TOOL_CALL_RESULT":
+              // Tool execution result received
+              if (event.toolCallId) {
+                let resultContent: JSONValue = null
+                try {
+                  resultContent = event.content ? (JSON.parse(event.content) as JSONValue) : (event.content as JSONValue ?? null)
+                } catch {
+                  resultContent = (event.content as JSONValue) ?? null
+                }
+
+                // Update the message with the tool result
+                setMessages((prev) =>
+                  prev.map((m) => {
+                    if (m.id !== assistantMessageId) return m
+
+                    const content = Array.isArray(m.content) ? m.content : []
+                    return {
+                      ...m,
+                      content: content.map((part) => {
+                        if (
+                          typeof part === "object" &&
+                          part !== null &&
+                          "type" in part &&
+                          part.type === "tool-call" &&
+                          "toolCallId" in part &&
+                          (part as ToolCallContentPart).toolCallId === event.toolCallId
+                        ) {
+                          return { ...part, result: resultContent }
+                        }
+                        return part
+                      }),
+                    }
+                  })
+                )
+              }
+              break
+
             case "RUN_ERROR":
               throw new Error(event.message || "Agent error")
+
             case "RUN_FINISHED":
               // Run complete
               break
@@ -255,10 +411,38 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
   }, [messages, onNew])
 
   const onCancel = useCallback(async () => {
-    if (agentRef.current) {
-      agentRef.current.abortRun()
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
       setIsRunning(false)
     }
+  }, [])
+
+  // Handle tool result updates (for human-in-the-loop scenarios)
+  const onAddToolResult = useCallback((options: AddToolResultOptions) => {
+    setMessages((prev) =>
+      prev.map((message) => {
+        if (message.id === options.messageId) {
+          const content = Array.isArray(message.content) ? message.content : []
+          return {
+            ...message,
+            content: content.map((part) => {
+              if (
+                typeof part === "object" &&
+                part !== null &&
+                "type" in part &&
+                part.type === "tool-call" &&
+                "toolCallId" in part &&
+                part.toolCallId === options.toolCallId
+              ) {
+                return { ...part, result: options.result }
+              }
+              return part
+            }),
+          }
+        }
+        return message
+      })
+    )
   }, [])
 
   const handleSetMessages = useCallback((newMessages: readonly ThreadMessageLike[]) => {
@@ -274,6 +458,7 @@ export const AssistantRuntimeProvider: React.FC<AssistantRuntimeProviderProps> =
     onEdit,
     onReload,
     onCancel,
+    onAddToolResult,
   })
 
   return <AUIRuntimeProvider runtime={runtime}>{children}</AUIRuntimeProvider>
